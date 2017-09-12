@@ -2,8 +2,10 @@
 
 package printer
 
-import "unsafe"
-import "syscall"
+import (
+	"syscall"
+	"unsafe"
+)
 
 var _ unsafe.Pointer
 
@@ -19,6 +21,7 @@ var (
 	procStartPagePrinter   = modwinspool.NewProc("StartPagePrinter")
 	procEndPagePrinter     = modwinspool.NewProc("EndPagePrinter")
 	procEnumPrintersW      = modwinspool.NewProc("EnumPrintersW")
+	procGetPrinterDriver   = modwinspool.NewProc("GetPrinterDriverW")
 )
 
 func GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) {
@@ -26,6 +29,25 @@ func GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) {
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func GetPrinterDriver(name string, buf *byte, bufN uint32) (err error) {
+	p, err := Open(name)
+	if err != nil {
+		return err
+	}
+	defer p.Close()
+	var needed uint32
+	r1, _, e1 := syscall.Syscall6(procGetPrinterDriver.Addr(), 6, uintptr(p.h), uintptr(0), uintptr(8), uintptr(unsafe.Pointer(buf)), uintptr(bufN), uintptr(unsafe.Pointer(&needed)))
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+			panic(err)
 		} else {
 			err = syscall.EINVAL
 		}

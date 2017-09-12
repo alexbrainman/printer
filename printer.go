@@ -10,6 +10,12 @@ import (
 	"unsafe"
 )
 
+const (
+	PRINTER_DRIVER_XPS uint32 = 0x00000002
+	RAW                       = "RAW"
+	XPS_PASS                  = "XPS_PASS"
+)
+
 //go:generate go run mksyscall_windows.go -output zapi.go printer.go
 
 type DOC_INFO_1 struct {
@@ -24,6 +30,34 @@ type PRINTER_INFO_5 struct {
 	Attributes               uint32
 	DeviceNotSelectedTimeout uint32
 	TransmissionRetryTimeout uint32
+}
+
+type DRIVER_INFO_8 struct {
+	Version                  uint32
+	Name                     *uint16
+	Environment              *uint16
+	DriverPath               *uint16
+	DataFile                 *uint16
+	ConfigFile               *uint16
+	HelpFile                 *uint16
+	DependentFiles           *uint16
+	MonitorName              *uint16
+	DefaultDataType          *uint16
+	PreviousNames            *uint16
+	DriverDate               syscall.Filetime
+	DriverVersion            uint64
+	MfgName                  *uint16
+	OEMUrl                   *uint16
+	HardwareID               *uint16
+	Provider                 *uint16
+	PrintProcessor           *uint16
+	VendorSetup              *uint16
+	ColorProfiles            *uint16
+	InfPath                  *uint16
+	PrinterDriverAttributes  uint32
+	CoreDriverDependencies   *uint16
+	MinInboxDriverVerDate    syscall.Filetime
+	MinInboxDriverVerVersion uint32
 }
 
 const (
@@ -56,6 +90,36 @@ func Default() (string, error) {
 		}
 	}
 	return syscall.UTF16ToString(b), nil
+}
+
+func GetDefaultPrinterType() (string, error) {
+	printerName, _ := Default()
+	return GetPrinterType(printerName)
+}
+
+func GetPrinterType(printerName string) (string, error) {
+	b := make([]byte, 1024*10)
+	n := uint32(len(b))
+	err := GetPrinterDriver(printerName, &b[0], n)
+	if err != nil {
+		if err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			return "", err
+		}
+		b = make([]byte, n)
+		err = GetPrinterDriver(printerName, &b[0], n)
+		if err != nil {
+			return "", err
+		}
+	}
+	di := (*DRIVER_INFO_8)(unsafe.Pointer(&b[0]))
+
+	driverType := RAW
+
+	if di.PrinterDriverAttributes&PRINTER_DRIVER_XPS == 2 {
+		driverType = XPS_PASS
+	}
+
+	return driverType, nil
 }
 
 // ReadNames return printer names on the system
