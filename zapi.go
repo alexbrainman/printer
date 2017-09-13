@@ -2,10 +2,8 @@
 
 package printer
 
-import (
-	"syscall"
-	"unsafe"
-)
+import "unsafe"
+import "syscall"
 
 var _ unsafe.Pointer
 
@@ -21,7 +19,7 @@ var (
 	procStartPagePrinter   = modwinspool.NewProc("StartPagePrinter")
 	procEndPagePrinter     = modwinspool.NewProc("EndPagePrinter")
 	procEnumPrintersW      = modwinspool.NewProc("EnumPrintersW")
-	procGetPrinterDriver   = modwinspool.NewProc("GetPrinterDriverW")
+	procGetPrinterDriverW  = modwinspool.NewProc("GetPrinterDriverW")
 )
 
 func GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) {
@@ -29,25 +27,6 @@ func GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) {
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)
-		} else {
-			err = syscall.EINVAL
-		}
-	}
-	return
-}
-
-func GetPrinterDriver(name string, buf *byte, bufN uint32) (err error) {
-	p, err := Open(name)
-	if err != nil {
-		return err
-	}
-	defer p.Close()
-	var needed uint32
-	r1, _, e1 := syscall.Syscall6(procGetPrinterDriver.Addr(), 6, uintptr(p.h), uintptr(0), uintptr(8), uintptr(unsafe.Pointer(buf)), uintptr(bufN), uintptr(unsafe.Pointer(&needed)))
-	if r1 == 0 {
-		if e1 != 0 {
-			err = error(e1)
-			panic(err)
 		} else {
 			err = syscall.EINVAL
 		}
@@ -141,6 +120,18 @@ func EndPagePrinter(h syscall.Handle) (err error) {
 
 func EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint32, needed *uint32, returned *uint32) (err error) {
 	r1, _, e1 := syscall.Syscall9(procEnumPrintersW.Addr(), 7, uintptr(flags), uintptr(unsafe.Pointer(name)), uintptr(level), uintptr(unsafe.Pointer(buf)), uintptr(bufN), uintptr(unsafe.Pointer(needed)), uintptr(unsafe.Pointer(returned)), 0, 0)
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) {
+	r1, _, e1 := syscall.Syscall6(procGetPrinterDriverW.Addr(), 6, uintptr(h), uintptr(unsafe.Pointer(env)), uintptr(level), uintptr(unsafe.Pointer(di)), uintptr(n), uintptr(unsafe.Pointer(needed)))
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)

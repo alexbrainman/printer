@@ -41,6 +41,7 @@ func listPrinters() error {
 	if err != nil {
 		return err
 	}
+
 	for i, p := range printers {
 		s := " "
 		if p == defaultPrinter {
@@ -77,7 +78,12 @@ func printOneDocument(printerName, documentName string, lines []string) error {
 	}
 	defer p.Close()
 
-	err = p.StartDocument(documentName, "RAW")
+	dataType, err := p.PrintDataType()
+	if err != nil {
+		return err
+	}
+
+	err = p.StartDocument(documentName, dataType)
 	if err != nil {
 		return err
 	}
