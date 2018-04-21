@@ -26,9 +26,39 @@ type PRINTER_INFO_5 struct {
 	TransmissionRetryTimeout uint32
 }
 
+type DRIVER_INFO_8 struct {
+	Version                  uint32
+	Name                     *uint16
+	Environment              *uint16
+	DriverPath               *uint16
+	DataFile                 *uint16
+	ConfigFile               *uint16
+	HelpFile                 *uint16
+	DependentFiles           *uint16
+	MonitorName              *uint16
+	DefaultDataType          *uint16
+	PreviousNames            *uint16
+	DriverDate               syscall.Filetime
+	DriverVersion            uint64
+	MfgName                  *uint16
+	OEMUrl                   *uint16
+	HardwareID               *uint16
+	Provider                 *uint16
+	PrintProcessor           *uint16
+	VendorSetup              *uint16
+	ColorProfiles            *uint16
+	InfPath                  *uint16
+	PrinterDriverAttributes  uint32
+	CoreDriverDependencies   *uint16
+	MinInboxDriverVerDate    syscall.Filetime
+	MinInboxDriverVerVersion uint32
+}
+
 const (
 	PRINTER_ENUM_LOCAL       = 2
 	PRINTER_ENUM_CONNECTIONS = 4
+
+	PRINTER_DRIVER_XPS = 0x00000002
 )
 
 //sys	GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) = winspool.GetDefaultPrinterW
@@ -40,6 +70,7 @@ const (
 //sys	StartPagePrinter(h syscall.Handle) (err error) = winspool.StartPagePrinter
 //sys	EndPagePrinter(h syscall.Handle) (err error) = winspool.EndPagePrinter
 //sys	EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint32, needed *uint32, returned *uint32) (err error) = winspool.EnumPrintersW
+//sys   GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
 
 func Default() (string, error) {
 	b := make([]uint16, 3)
@@ -97,6 +128,40 @@ func Open(name string) (*Printer, error) {
 	return &p, nil
 }
 
+// DriverInfo stores information about printer driver.
+type DriverInfo struct {
+	Name        string
+	Environment string
+	DriverPath  string
+	Attributes  uint32
+}
+
+// DriverInfo returns information about printer p driver.
+func (p *Printer) DriverInfo() (*DriverInfo, error) {
+	var needed uint32
+	b := make([]byte, 1024*10)
+	for {
+		err := GetPrinterDriver(p.h, nil, 8, &b[0], uint32(len(b)), &needed)
+		if err == nil {
+			break
+		}
+		if err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			return nil, err
+		}
+		if needed <= uint32(len(b)) {
+			return nil, err
+		}
+		b = make([]byte, needed)
+	}
+	di := (*DRIVER_INFO_8)(unsafe.Pointer(&b[0]))
+	return &DriverInfo{
+		Attributes:  di.PrinterDriverAttributes,
+		Name:        syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Name))[:]),
+		DriverPath:  syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.DriverPath))[:]),
+		Environment: syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Environment))[:]),
+	}, nil
+}
+
 func (p *Printer) StartDocument(name, datatype string) error {
 	d := DOC_INFO_1{
 		DocName:    &(syscall.StringToUTF16(name))[0],
@@ -104,6 +169,22 @@ func (p *Printer) StartDocument(name, datatype string) error {
 		Datatype:   &(syscall.StringToUTF16(datatype))[0],
 	}
 	return StartDocPrinter(p.h, 1, &d)
+}
+
+// StartRawDocument calls StartDocument and passes either "RAW" or "XPS_PASS"
+// as a document type, depending if printer driver is XPS-based or not.
+func (p *Printer) StartRawDocument(name string) error {
+	di, err := p.DriverInfo()
+	if err != nil {
+		return err
+	}
+	// See https://support.microsoft.com/en-us/help/2779300/v4-print-drivers-using-raw-mode-to-send-pcl-postscript-directly-to-the
+	// for details.
+	datatype := "RAW"
+	if di.Attributes&PRINTER_DRIVER_XPS != 0 {
+		datatype = "XPS_PASS"
+	}
+	return p.StartDocument(name, datatype)
 }
 
 func (p *Printer) Write(b []byte) (int, error) {

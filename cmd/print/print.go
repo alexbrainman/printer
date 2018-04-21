@@ -77,7 +77,7 @@ func printOneDocument(printerName, documentName string, lines []string) error {
 	}
 	defer p.Close()
 
-	err = p.StartDocument(documentName, "RAW")
+	err = p.StartRawDocument(documentName)
 	if err != nil {
 		return err
 	}

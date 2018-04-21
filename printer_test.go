@@ -54,3 +54,22 @@ func TestReadNames(t *testing.T) {
 	}
 	t.Fatal("Default printed %q is not listed amongst printers returned by ReadNames %q", name, names)
 }
+
+func TestDriverInfo(t *testing.T) {
+	name, err := Default()
+	if err != nil {
+		t.Fatalf("Default failed: %v", err)
+	}
+
+	p, err := Open(name)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer p.Close()
+
+	di, err := p.DriverInfo()
+	if err != nil {
+		t.Fatalf("DriverInfo failed: %v", err)
+	}
+	t.Logf("%+v", di)
+}
