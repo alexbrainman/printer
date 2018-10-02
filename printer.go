@@ -6,7 +6,10 @@
 package printer
 
 import (
+	"reflect"
+	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -54,11 +57,44 @@ type DRIVER_INFO_8 struct {
 	MinInboxDriverVerVersion uint32
 }
 
+type JOB_INFO_1 struct {
+	JobID        uint32
+	PrinterName  *uint16
+	MachineName  *uint16
+	UserName     *uint16
+	Document     *uint16
+	DataType     *uint16
+	Status       *uint16
+	StatusCode   uint32
+	Priority     uint32
+	Position     uint32
+	TotalPages   uint32
+	PagesPrinted uint32
+	Submitted    syscall.Systemtime
+}
+
 const (
 	PRINTER_ENUM_LOCAL       = 2
 	PRINTER_ENUM_CONNECTIONS = 4
 
 	PRINTER_DRIVER_XPS = 0x00000002
+)
+
+const (
+	JOB_STATUS_PAUSED            = 0x00000001 // Job is paused
+	JOB_STATUS_ERROR             = 0x00000002 // An error is associated with the job
+	JOB_STATUS_DELETING          = 0x00000004 // Job is being deleted
+	JOB_STATUS_SPOOLING          = 0x00000008 // Job is spooling
+	JOB_STATUS_PRINTING          = 0x00000010 // Job is printing
+	JOB_STATUS_OFFLINE           = 0x00000020 // Printer is offline
+	JOB_STATUS_PAPEROUT          = 0x00000040 // Printer is out of paper
+	JOB_STATUS_PRINTED           = 0x00000080 // Job has printed
+	JOB_STATUS_DELETED           = 0x00000100 // Job has been deleted
+	JOB_STATUS_BLOCKED_DEVQ      = 0x00000200 // Printer driver cannot print the job
+	JOB_STATUS_USER_INTERVENTION = 0x00000400 // User action required
+	JOB_STATUS_RESTART           = 0x00000800 // Job has been restarted
+	JOB_STATUS_COMPLETE          = 0x00001000 // Job has been delivered to the printer
+	JOB_STATUS_RETAINED          = 0x00002000 // Job has been retained in the print queue
 )
 
 //sys	GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) = winspool.GetDefaultPrinterW
@@ -70,7 +106,8 @@ const (
 //sys	StartPagePrinter(h syscall.Handle) (err error) = winspool.StartPagePrinter
 //sys	EndPagePrinter(h syscall.Handle) (err error) = winspool.EndPagePrinter
 //sys	EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint32, needed *uint32, returned *uint32) (err error) = winspool.EnumPrintersW
-//sys   GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
+//sys	GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
+//sys	EnumJobs(h syscall.Handle, firstJob uint32, noJobs uint32, level uint32, buf *byte, bufN uint32, bytesNeeded *uint32, jobsReturned *uint32) (err error) = winspool.EnumJobsW
 
 func Default() (string, error) {
 	b := make([]uint16, 3)
@@ -134,6 +171,135 @@ type DriverInfo struct {
 	Environment string
 	DriverPath  string
 	Attributes  uint32
+}
+
+// PrintJobInfo stores information about a print job.
+type PrintJobInfo struct {
+	JobID           uint32
+	UserMachineName string
+	UserName        string
+	DocumentName    string
+	DataType        string
+	Status          string
+	StatusCode      uint32
+	Priority        uint32
+	Position        uint32
+	TotalPages      uint32
+	PagesPrinted    uint32
+	PercentComplete float32
+	Submitted       time.Time
+}
+
+// PrintJobs returns information about all print jobs on this printer
+func (p *Printer) PrintJobs() ([]PrintJobInfo, error) {
+	var bytesNeeded, jobsReturned uint32
+	var err error
+	buf := make([]byte, 1)
+	for {
+		err = EnumJobs(p.h, 0, 255, 1, &buf[0], uint32(len(buf)), &bytesNeeded, &jobsReturned)
+		if err == nil {
+			break
+		}
+		if err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			return []PrintJobInfo{}, err
+		}
+		if bytesNeeded <= uint32(len(buf)) {
+			return []PrintJobInfo{}, err
+		}
+		buf = make([]byte, bytesNeeded)
+	}
+	if jobsReturned > 0 {
+		pj := make([]PrintJobInfo, jobsReturned)
+		ji := make([]JOB_INFO_1, jobsReturned)
+		unsafeSliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&ji))
+		unsafeSliceHeader.Data = uintptr(unsafe.Pointer(&buf[0]))
+		unsafeSliceHeader.Len = int(jobsReturned)
+		unsafeSliceHeader.Cap = int(jobsReturned)
+		for idx, j := range ji {
+			pj[idx] = PrintJobInfo{
+				JobID:        j.JobID,
+				StatusCode:   j.StatusCode,
+				Priority:     j.Priority,
+				Position:     j.Position,
+				TotalPages:   j.TotalPages,
+				PagesPrinted: j.PagesPrinted,
+			}
+			// get strings, checking for nil
+			if j.MachineName != nil {
+				pj[idx].UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
+			}
+			if j.UserName != nil {
+				pj[idx].UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
+			}
+			if j.Document != nil {
+				pj[idx].DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
+			}
+			if j.DataType != nil {
+				pj[idx].DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
+			}
+			if j.Status != nil {
+				pj[idx].Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
+			}
+			if strings.TrimSpace(pj[idx].Status) == "" {
+				switch j.StatusCode {
+				case JOB_STATUS_PAUSED:
+					pj[idx].Status = "Paused"
+				case JOB_STATUS_ERROR:
+					pj[idx].Status = "Error"
+				case JOB_STATUS_DELETING:
+					pj[idx].Status = "Deleting"
+				case JOB_STATUS_SPOOLING:
+					pj[idx].Status = "Spooling"
+				case JOB_STATUS_PRINTING:
+					pj[idx].Status = "Printing"
+				case JOB_STATUS_OFFLINE:
+					pj[idx].Status = "Printer Offline"
+				case JOB_STATUS_PAPEROUT:
+					pj[idx].Status = "Out of Paper"
+				case JOB_STATUS_PRINTED:
+					pj[idx].Status = "Printed"
+				case JOB_STATUS_DELETED:
+					pj[idx].Status = "Deleted"
+				case JOB_STATUS_BLOCKED_DEVQ:
+					pj[idx].Status = "Driver Error"
+				case JOB_STATUS_USER_INTERVENTION:
+					pj[idx].Status = "User Action Required"
+				case JOB_STATUS_RESTART:
+					pj[idx].Status = "Restarted"
+				case JOB_STATUS_COMPLETE:
+					pj[idx].Status = "Sent to Printer"
+				case JOB_STATUS_RETAINED: // Vista+, job has been retained in the print queue and cannot be deleted
+					pj[idx].Status = "Retained"
+				default:
+					pj[idx].Status = "Unknown"
+				}
+			}
+			// Submitted
+			if j.Submitted.Milliseconds == 0 {
+				j.Submitted.Milliseconds = 1 // prevent div/0
+			}
+			pj[idx].Submitted = time.Date(
+				int(j.Submitted.Year),
+				time.Month(int(j.Submitted.Month)),
+				int(j.Submitted.Day),
+				int(j.Submitted.Hour),
+				int(j.Submitted.Minute),
+				int(j.Submitted.Second),
+				int(1000000/int(j.Submitted.Milliseconds)),
+				time.Local,
+			).UTC()
+			// PercentComplete
+			if j.PagesPrinted == 0 {
+				pj[idx].PercentComplete = 0.0
+			} else if j.TotalPages == 0 {
+				pj[idx].PercentComplete = 1.0
+			} else {
+				pj[idx].PercentComplete = float32(int(float32(j.PagesPrinted)/float32(j.TotalPages))*100) / 100 // convert to 0.00 - 1.00
+			}
+		}
+		return pj, nil
+	}
+	return []PrintJobInfo{}, nil
 }
 
 // DriverInfo returns information about printer p driver.

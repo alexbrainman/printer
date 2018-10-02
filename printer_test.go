@@ -5,6 +5,7 @@
 package printer
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 )
@@ -52,7 +53,7 @@ func TestReadNames(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("Default printed %q is not listed amongst printers returned by ReadNames %q", name, names)
+	t.Fatal("Default printed", name, " is not listed amongst printers returned by ReadNames", names)
 }
 
 func TestDriverInfo(t *testing.T) {
@@ -72,4 +73,32 @@ func TestDriverInfo(t *testing.T) {
 		t.Fatalf("DriverInfo failed: %v", err)
 	}
 	t.Logf("%+v", di)
+}
+
+func TestPrintJobs(t *testing.T) {
+	names, err := ReadNames()
+	if err != nil {
+		t.Fatalf("Default failed: %v", err)
+	}
+	for _, name := range names {
+		fmt.Println("Printer Name:", name)
+		p, err := Open(name)
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+
+		pj, err := p.PrintJobs()
+		if err != nil {
+			t.Fatalf("PrintJobs failed: %v", err)
+		} else if len(pj) > 0 {
+			fmt.Println("Print Jobs:", len(pj))
+			for _, j := range pj {
+				b, err := json.MarshalIndent(j, "", "   ")
+				if err == nil && len(b) > 0 {
+					fmt.Println(string(b))
+				}
+			}
+		}
+		p.Close()
+	}
 }
