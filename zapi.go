@@ -10,16 +10,20 @@ var _ unsafe.Pointer
 var (
 	modwinspool = syscall.NewLazyDLL("winspool.drv")
 
-	procGetDefaultPrinterW = modwinspool.NewProc("GetDefaultPrinterW")
-	procClosePrinter       = modwinspool.NewProc("ClosePrinter")
-	procOpenPrinterW       = modwinspool.NewProc("OpenPrinterW")
-	procStartDocPrinterW   = modwinspool.NewProc("StartDocPrinterW")
-	procEndDocPrinter      = modwinspool.NewProc("EndDocPrinter")
-	procWritePrinter       = modwinspool.NewProc("WritePrinter")
-	procStartPagePrinter   = modwinspool.NewProc("StartPagePrinter")
-	procEndPagePrinter     = modwinspool.NewProc("EndPagePrinter")
-	procEnumPrintersW      = modwinspool.NewProc("EnumPrintersW")
-	procGetPrinterDriverW  = modwinspool.NewProc("GetPrinterDriverW")
+	procGetDefaultPrinterW                 = modwinspool.NewProc("GetDefaultPrinterW")
+	procClosePrinter                       = modwinspool.NewProc("ClosePrinter")
+	procOpenPrinterW                       = modwinspool.NewProc("OpenPrinterW")
+	procStartDocPrinterW                   = modwinspool.NewProc("StartDocPrinterW")
+	procEndDocPrinter                      = modwinspool.NewProc("EndDocPrinter")
+	procWritePrinter                       = modwinspool.NewProc("WritePrinter")
+	procStartPagePrinter                   = modwinspool.NewProc("StartPagePrinter")
+	procEndPagePrinter                     = modwinspool.NewProc("EndPagePrinter")
+	procEnumPrintersW                      = modwinspool.NewProc("EnumPrintersW")
+	procGetPrinterDriverW                  = modwinspool.NewProc("GetPrinterDriverW")
+	procFindFirstPrinterChangeNotification = modwinspool.NewProc("FindFirstPrinterChangeNotification")
+	procFindNextPrinterChangeNotification  = modwinspool.NewProc("FindNextPrinterChangeNotification")
+	procFindClosePrinterChangeNotification = modwinspool.NewProc("FindClosePrinterChangeNotification")
+	procFreePrinterNotifyInfo              = modwinspool.NewProc("FreePrinterNotifyInfo")
 )
 
 func GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) {
@@ -132,6 +136,55 @@ func EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint
 
 func GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) {
 	r1, _, e1 := syscall.Syscall6(procGetPrinterDriverW.Addr(), 6, uintptr(h), uintptr(unsafe.Pointer(env)), uintptr(level), uintptr(unsafe.Pointer(di)), uintptr(n), uintptr(unsafe.Pointer(needed)))
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func FindFirstPrinterChangeNotification(h syscall.Handle, filter uint32, options uint32, notifyOptions *PRINTER_NOTIFY_OPTIONS) (rtn syscall.Handle, err error) {
+	r0, _, e1 := syscall.Syscall6(procFindFirstPrinterChangeNotification.Addr(), 4, uintptr(h), uintptr(filter), uintptr(options), uintptr(unsafe.Pointer(notifyOptions)), 0, 0)
+	rtn = syscall.Handle(r0)
+	if rtn == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func FindNextPrinterChangeNotification(h syscall.Handle, cause *uint16, options *PRINTER_NOTIFY_OPTIONS, info **PRINTER_NOTIFY_INFO) (err error) {
+	r1, _, e1 := syscall.Syscall6(procFindNextPrinterChangeNotification.Addr(), 4, uintptr(h), uintptr(unsafe.Pointer(cause)), uintptr(unsafe.Pointer(options)), uintptr(unsafe.Pointer(info)), 0, 0)
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func FindClosePrinterChangeNotification(h syscall.Handle) (err error) {
+	r1, _, e1 := syscall.Syscall(procFindClosePrinterChangeNotification.Addr(), 1, uintptr(h), 0, 0)
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func FreePrinterNotifyInfo(info *PRINTER_NOTIFY_INFO) (err error) {
+	r1, _, e1 := syscall.Syscall(procFreePrinterNotifyInfo.Addr(), 1, uintptr(unsafe.Pointer(info)), 0, 0)
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)
