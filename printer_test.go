@@ -53,7 +53,7 @@ func TestReadNames(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal("Default printed", name, " is not listed amongst printers returned by ReadNames", names)
+	t.Fatalf("Default printed %q is not listed amongst printers returned by ReadNames %q", name, names)
 }
 
 func TestDriverInfo(t *testing.T) {
@@ -75,30 +75,31 @@ func TestDriverInfo(t *testing.T) {
 	t.Logf("%+v", di)
 }
 
-func TestPrintJobs(t *testing.T) {
+func TestJobs(t *testing.T) {
 	names, err := ReadNames()
 	if err != nil {
-		t.Fatalf("Default failed: %v", err)
+		t.Fatalf("ReadNames failed: %v", err)
 	}
 	for _, name := range names {
-		fmt.Println("Printer Name:", name)
+		t.Log("Printer Name:", name)
 		p, err := Open(name)
 		if err != nil {
 			t.Fatalf("Open failed: %v", err)
 		}
+		defer p.Close()
 
-		pj, err := p.PrintJobs()
+		pj, err := p.Jobs()
 		if err != nil {
-			t.Fatalf("PrintJobs failed: %v", err)
-		} else if len(pj) > 0 {
-			fmt.Println("Print Jobs:", len(pj))
+			t.Fatalf("Jobs failed: %v", err)
+		}
+		if len(pj) > 0 {
+			t.Log("Print Jobs:", len(pj))
 			for _, j := range pj {
 				b, err := json.MarshalIndent(j, "", "   ")
 				if err == nil && len(b) > 0 {
-					fmt.Println(string(b))
+					t.Log(string(b))
 				}
 			}
 		}
-		p.Close()
 	}
 }

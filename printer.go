@@ -6,7 +6,6 @@
 package printer
 
 import (
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -95,6 +94,7 @@ const (
 	JOB_STATUS_RESTART           = 0x00000800 // Job has been restarted
 	JOB_STATUS_COMPLETE          = 0x00001000 // Job has been delivered to the printer
 	JOB_STATUS_RETAINED          = 0x00002000 // Job has been retained in the print queue
+	JOB_STATUS_RENDERING_LOCALLY = 0x00004000 // Job rendering locally on the client
 )
 
 //sys	GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) = winspool.GetDefaultPrinterW
@@ -186,120 +186,105 @@ type PrintJobInfo struct {
 	Position        uint32
 	TotalPages      uint32
 	PagesPrinted    uint32
-	PercentComplete float32
 	Submitted       time.Time
 }
 
-// PrintJobs returns information about all print jobs on this printer
-func (p *Printer) PrintJobs() ([]PrintJobInfo, error) {
+// Jobs returns information about all print jobs on this printer
+func (p *Printer) Jobs() ([]PrintJobInfo, error) {
 	var bytesNeeded, jobsReturned uint32
-	var err error
 	buf := make([]byte, 1)
 	for {
-		err = EnumJobs(p.h, 0, 255, 1, &buf[0], uint32(len(buf)), &bytesNeeded, &jobsReturned)
+		err := EnumJobs(p.h, 0, 255, 1, &buf[0], uint32(len(buf)), &bytesNeeded, &jobsReturned)
 		if err == nil {
 			break
 		}
 		if err != syscall.ERROR_INSUFFICIENT_BUFFER {
-			return []PrintJobInfo{}, err
+			return nil, err
 		}
 		if bytesNeeded <= uint32(len(buf)) {
-			return []PrintJobInfo{}, err
+			return nil, err
 		}
 		buf = make([]byte, bytesNeeded)
 	}
-	if jobsReturned > 0 {
-		pj := make([]PrintJobInfo, jobsReturned)
-		ji := make([]JOB_INFO_1, jobsReturned)
-		unsafeSliceHeader := (*reflect.SliceHeader)(unsafe.Pointer(&ji))
-		unsafeSliceHeader.Data = uintptr(unsafe.Pointer(&buf[0]))
-		unsafeSliceHeader.Len = int(jobsReturned)
-		unsafeSliceHeader.Cap = int(jobsReturned)
-		for idx, j := range ji {
-			pj[idx] = PrintJobInfo{
-				JobID:        j.JobID,
-				StatusCode:   j.StatusCode,
-				Priority:     j.Priority,
-				Position:     j.Position,
-				TotalPages:   j.TotalPages,
-				PagesPrinted: j.PagesPrinted,
-			}
-			// get strings, checking for nil
-			if j.MachineName != nil {
-				pj[idx].UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
-			}
-			if j.UserName != nil {
-				pj[idx].UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
-			}
-			if j.Document != nil {
-				pj[idx].DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
-			}
-			if j.DataType != nil {
-				pj[idx].DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
-			}
-			if j.Status != nil {
-				pj[idx].Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
-			}
-			if strings.TrimSpace(pj[idx].Status) == "" {
-				switch j.StatusCode {
-				case JOB_STATUS_PAUSED:
-					pj[idx].Status = "Paused"
-				case JOB_STATUS_ERROR:
-					pj[idx].Status = "Error"
-				case JOB_STATUS_DELETING:
-					pj[idx].Status = "Deleting"
-				case JOB_STATUS_SPOOLING:
-					pj[idx].Status = "Spooling"
-				case JOB_STATUS_PRINTING:
-					pj[idx].Status = "Printing"
-				case JOB_STATUS_OFFLINE:
-					pj[idx].Status = "Printer Offline"
-				case JOB_STATUS_PAPEROUT:
-					pj[idx].Status = "Out of Paper"
-				case JOB_STATUS_PRINTED:
-					pj[idx].Status = "Printed"
-				case JOB_STATUS_DELETED:
-					pj[idx].Status = "Deleted"
-				case JOB_STATUS_BLOCKED_DEVQ:
-					pj[idx].Status = "Driver Error"
-				case JOB_STATUS_USER_INTERVENTION:
-					pj[idx].Status = "User Action Required"
-				case JOB_STATUS_RESTART:
-					pj[idx].Status = "Restarted"
-				case JOB_STATUS_COMPLETE:
-					pj[idx].Status = "Sent to Printer"
-				case JOB_STATUS_RETAINED: // Vista+, job has been retained in the print queue and cannot be deleted
-					pj[idx].Status = "Retained"
-				default:
-					pj[idx].Status = "Unknown"
-				}
-			}
-			// Submitted
-			if j.Submitted.Milliseconds == 0 {
-				j.Submitted.Milliseconds = 1 // prevent div/0
-			}
-			pj[idx].Submitted = time.Date(
-				int(j.Submitted.Year),
-				time.Month(int(j.Submitted.Month)),
-				int(j.Submitted.Day),
-				int(j.Submitted.Hour),
-				int(j.Submitted.Minute),
-				int(j.Submitted.Second),
-				int(1000000/int(j.Submitted.Milliseconds)),
-				time.Local,
-			).UTC()
-			// PercentComplete
-			if j.PagesPrinted == 0 {
-				pj[idx].PercentComplete = 0.0
-			} else if j.TotalPages == 0 {
-				pj[idx].PercentComplete = 1.0
-			} else {
-				pj[idx].PercentComplete = float32(int(float32(j.PagesPrinted)/float32(j.TotalPages))*100) / 100 // convert to 0.00 - 1.00
+	if jobsReturned <= 0 {
+		return nil, nil
+	}
+	pj := make([]PrintJobInfo, 0, jobsReturned)
+	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
+	for idx, j := range ji {
+		pj = append(pj, PrintJobInfo{
+			JobID:        j.JobID,
+			StatusCode:   j.StatusCode,
+			Priority:     j.Priority,
+			Position:     j.Position,
+			TotalPages:   j.TotalPages,
+			PagesPrinted: j.PagesPrinted,
+		})
+		// get strings, checking for nil
+		if j.MachineName != nil {
+			pj[idx].UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
+		}
+		if j.UserName != nil {
+			pj[idx].UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
+		}
+		if j.Document != nil {
+			pj[idx].DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
+		}
+		if j.DataType != nil {
+			pj[idx].DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
+		}
+		if j.Status != nil {
+			pj[idx].Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
+		}
+		if strings.TrimSpace(pj[idx].Status) == "" {
+			switch j.StatusCode {
+			case JOB_STATUS_PAUSED:
+				pj[idx].Status = "Paused"
+			case JOB_STATUS_ERROR:
+				pj[idx].Status = "Error"
+			case JOB_STATUS_DELETING:
+				pj[idx].Status = "Deleting"
+			case JOB_STATUS_SPOOLING:
+				pj[idx].Status = "Spooling"
+			case JOB_STATUS_PRINTING:
+				pj[idx].Status = "Printing"
+			case JOB_STATUS_OFFLINE:
+				pj[idx].Status = "Printer Offline"
+			case JOB_STATUS_PAPEROUT:
+				pj[idx].Status = "Out of Paper"
+			case JOB_STATUS_PRINTED:
+				pj[idx].Status = "Printed"
+			case JOB_STATUS_DELETED:
+				pj[idx].Status = "Deleted"
+			case JOB_STATUS_BLOCKED_DEVQ:
+				pj[idx].Status = "Driver Error"
+			case JOB_STATUS_USER_INTERVENTION:
+				pj[idx].Status = "User Action Required"
+			case JOB_STATUS_RESTART:
+				pj[idx].Status = "Restarted"
+			case JOB_STATUS_COMPLETE:
+				pj[idx].Status = "Sent to Printer"
+			case JOB_STATUS_RETAINED: // Vista+, job has been retained in the print queue and cannot be deleted
+				pj[idx].Status = "Retained"
+			case JOB_STATUS_RENDERING_LOCALLY:
+				pj[idx].Status = "Rendering on Client"
+			default:
+				pj[idx].Status = "Unknown"
 			}
 		}
-		return pj, nil
+		// Submitted
+		pj[idx].Submitted = time.Date(
+			int(j.Submitted.Year),
+			time.Month(int(j.Submitted.Month)),
+			int(j.Submitted.Day),
+			int(j.Submitted.Hour),
+			int(j.Submitted.Minute),
+			int(j.Submitted.Second),
+			int(1000*j.Submitted.Milliseconds),
+			time.Local,
+		).UTC()
 	}
-	return []PrintJobInfo{}, nil
+	return pj, nil
 }
 
 // DriverInfo returns information about printer p driver.
