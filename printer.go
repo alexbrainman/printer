@@ -173,8 +173,8 @@ type DriverInfo struct {
 	Attributes  uint32
 }
 
-// PrintJobInfo stores information about a print job.
-type PrintJobInfo struct {
+// JobInfo stores information about a print job.
+type JobInfo struct {
 	JobID           uint32
 	UserMachineName string
 	UserName        string
@@ -190,7 +190,7 @@ type PrintJobInfo struct {
 }
 
 // Jobs returns information about all print jobs on this printer
-func (p *Printer) Jobs() ([]PrintJobInfo, error) {
+func (p *Printer) Jobs() ([]JobInfo, error) {
 	var bytesNeeded, jobsReturned uint32
 	buf := make([]byte, 1)
 	for {
@@ -209,71 +209,84 @@ func (p *Printer) Jobs() ([]PrintJobInfo, error) {
 	if jobsReturned <= 0 {
 		return nil, nil
 	}
-	pj := make([]PrintJobInfo, 0, jobsReturned)
+	pjs := make([]JobInfo, 0, jobsReturned)
 	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
-	for idx, j := range ji {
-		pj = append(pj, PrintJobInfo{
+	for _, j := range ji {
+		pji := JobInfo{
 			JobID:        j.JobID,
 			StatusCode:   j.StatusCode,
 			Priority:     j.Priority,
 			Position:     j.Position,
 			TotalPages:   j.TotalPages,
 			PagesPrinted: j.PagesPrinted,
-		})
-		// get strings, checking for nil
+		}
 		if j.MachineName != nil {
-			pj[idx].UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
+			pji.UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
 		}
 		if j.UserName != nil {
-			pj[idx].UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
+			pji.UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
 		}
 		if j.Document != nil {
-			pj[idx].DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
+			pji.DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
 		}
 		if j.DataType != nil {
-			pj[idx].DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
+			pji.DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
 		}
 		if j.Status != nil {
-			pj[idx].Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
+			pji.Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
 		}
-		if strings.TrimSpace(pj[idx].Status) == "" {
-			switch j.StatusCode {
-			case JOB_STATUS_PAUSED:
-				pj[idx].Status = "Paused"
-			case JOB_STATUS_ERROR:
-				pj[idx].Status = "Error"
-			case JOB_STATUS_DELETING:
-				pj[idx].Status = "Deleting"
-			case JOB_STATUS_SPOOLING:
-				pj[idx].Status = "Spooling"
-			case JOB_STATUS_PRINTING:
-				pj[idx].Status = "Printing"
-			case JOB_STATUS_OFFLINE:
-				pj[idx].Status = "Printer Offline"
-			case JOB_STATUS_PAPEROUT:
-				pj[idx].Status = "Out of Paper"
-			case JOB_STATUS_PRINTED:
-				pj[idx].Status = "Printed"
-			case JOB_STATUS_DELETED:
-				pj[idx].Status = "Deleted"
-			case JOB_STATUS_BLOCKED_DEVQ:
-				pj[idx].Status = "Driver Error"
-			case JOB_STATUS_USER_INTERVENTION:
-				pj[idx].Status = "User Action Required"
-			case JOB_STATUS_RESTART:
-				pj[idx].Status = "Restarted"
-			case JOB_STATUS_COMPLETE:
-				pj[idx].Status = "Sent to Printer"
-			case JOB_STATUS_RETAINED: // Vista+, job has been retained in the print queue and cannot be deleted
-				pj[idx].Status = "Retained"
-			case JOB_STATUS_RENDERING_LOCALLY:
-				pj[idx].Status = "Rendering on Client"
-			default:
-				pj[idx].Status = "Unknown"
+		if strings.TrimSpace(pji.Status) == "" {
+			if pji.StatusCode == 0 {
+				pji.Status += "Queue Paused, "
 			}
+			if pji.StatusCode&JOB_STATUS_PRINTING != 0 {
+				pji.Status += "Printing, "
+			}
+			if pji.StatusCode&JOB_STATUS_PAUSED != 0 {
+				pji.Status += "Paused, "
+			}
+			if pji.StatusCode&JOB_STATUS_ERROR != 0 {
+				pji.Status += "Error, "
+			}
+			if pji.StatusCode&JOB_STATUS_DELETING != 0 {
+				pji.Status += "Deleting, "
+			}
+			if pji.StatusCode&JOB_STATUS_SPOOLING != 0 {
+				pji.Status += "Spooling, "
+			}
+			if pji.StatusCode&JOB_STATUS_OFFLINE != 0 {
+				pji.Status += "Printer Offline, "
+			}
+			if pji.StatusCode&JOB_STATUS_PAPEROUT != 0 {
+				pji.Status += "Out of Paper, "
+			}
+			if pji.StatusCode&JOB_STATUS_PRINTED != 0 {
+				pji.Status += "Printed, "
+			}
+			if pji.StatusCode&JOB_STATUS_DELETED != 0 {
+				pji.Status += "Deleted, "
+			}
+			if pji.StatusCode&JOB_STATUS_BLOCKED_DEVQ != 0 {
+				pji.Status += "Driver Error, "
+			}
+			if pji.StatusCode&JOB_STATUS_USER_INTERVENTION != 0 {
+				pji.Status += "User Action Required, "
+			}
+			if pji.StatusCode&JOB_STATUS_RESTART != 0 {
+				pji.Status += "Restarted, "
+			}
+			if pji.StatusCode&JOB_STATUS_COMPLETE != 0 {
+				pji.Status += "Sent to Printer, "
+			}
+			if pji.StatusCode&JOB_STATUS_RETAINED != 0 {
+				pji.Status += "Retained, "
+			}
+			if pji.StatusCode&JOB_STATUS_RENDERING_LOCALLY != 0 {
+				pji.Status += "Rendering on Client, "
+			}
+			pji.Status = strings.TrimRight(pji.Status, ", ")
 		}
-		// Submitted
-		pj[idx].Submitted = time.Date(
+		pji.Submitted = time.Date(
 			int(j.Submitted.Year),
 			time.Month(int(j.Submitted.Month)),
 			int(j.Submitted.Day),
@@ -283,8 +296,9 @@ func (p *Printer) Jobs() ([]PrintJobInfo, error) {
 			int(1000*j.Submitted.Milliseconds),
 			time.Local,
 		).UTC()
+		pjs = append(pjs, pji)
 	}
-	return pj, nil
+	return pjs, nil
 }
 
 // DriverInfo returns information about printer p driver.
