@@ -6,7 +6,9 @@
 package printer
 
 import (
+	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -54,11 +56,45 @@ type DRIVER_INFO_8 struct {
 	MinInboxDriverVerVersion uint32
 }
 
+type JOB_INFO_1 struct {
+	JobID        uint32
+	PrinterName  *uint16
+	MachineName  *uint16
+	UserName     *uint16
+	Document     *uint16
+	DataType     *uint16
+	Status       *uint16
+	StatusCode   uint32
+	Priority     uint32
+	Position     uint32
+	TotalPages   uint32
+	PagesPrinted uint32
+	Submitted    syscall.Systemtime
+}
+
 const (
 	PRINTER_ENUM_LOCAL       = 2
 	PRINTER_ENUM_CONNECTIONS = 4
 
 	PRINTER_DRIVER_XPS = 0x00000002
+)
+
+const (
+	JOB_STATUS_PAUSED            = 0x00000001 // Job is paused
+	JOB_STATUS_ERROR             = 0x00000002 // An error is associated with the job
+	JOB_STATUS_DELETING          = 0x00000004 // Job is being deleted
+	JOB_STATUS_SPOOLING          = 0x00000008 // Job is spooling
+	JOB_STATUS_PRINTING          = 0x00000010 // Job is printing
+	JOB_STATUS_OFFLINE           = 0x00000020 // Printer is offline
+	JOB_STATUS_PAPEROUT          = 0x00000040 // Printer is out of paper
+	JOB_STATUS_PRINTED           = 0x00000080 // Job has printed
+	JOB_STATUS_DELETED           = 0x00000100 // Job has been deleted
+	JOB_STATUS_BLOCKED_DEVQ      = 0x00000200 // Printer driver cannot print the job
+	JOB_STATUS_USER_INTERVENTION = 0x00000400 // User action required
+	JOB_STATUS_RESTART           = 0x00000800 // Job has been restarted
+	JOB_STATUS_COMPLETE          = 0x00001000 // Job has been delivered to the printer
+	JOB_STATUS_RETAINED          = 0x00002000 // Job has been retained in the print queue
+	JOB_STATUS_RENDERING_LOCALLY = 0x00004000 // Job rendering locally on the client
 )
 
 //sys	GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) = winspool.GetDefaultPrinterW
@@ -70,7 +106,8 @@ const (
 //sys	StartPagePrinter(h syscall.Handle) (err error) = winspool.StartPagePrinter
 //sys	EndPagePrinter(h syscall.Handle) (err error) = winspool.EndPagePrinter
 //sys	EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint32, needed *uint32, returned *uint32) (err error) = winspool.EnumPrintersW
-//sys   GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
+//sys	GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
+//sys	EnumJobs(h syscall.Handle, firstJob uint32, noJobs uint32, level uint32, buf *byte, bufN uint32, bytesNeeded *uint32, jobsReturned *uint32) (err error) = winspool.EnumJobsW
 
 func Default() (string, error) {
 	b := make([]uint16, 3)
@@ -134,6 +171,134 @@ type DriverInfo struct {
 	Environment string
 	DriverPath  string
 	Attributes  uint32
+}
+
+// JobInfo stores information about a print job.
+type JobInfo struct {
+	JobID           uint32
+	UserMachineName string
+	UserName        string
+	DocumentName    string
+	DataType        string
+	Status          string
+	StatusCode      uint32
+	Priority        uint32
+	Position        uint32
+	TotalPages      uint32
+	PagesPrinted    uint32
+	Submitted       time.Time
+}
+
+// Jobs returns information about all print jobs on this printer
+func (p *Printer) Jobs() ([]JobInfo, error) {
+	var bytesNeeded, jobsReturned uint32
+	buf := make([]byte, 1)
+	for {
+		err := EnumJobs(p.h, 0, 255, 1, &buf[0], uint32(len(buf)), &bytesNeeded, &jobsReturned)
+		if err == nil {
+			break
+		}
+		if err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			return nil, err
+		}
+		if bytesNeeded <= uint32(len(buf)) {
+			return nil, err
+		}
+		buf = make([]byte, bytesNeeded)
+	}
+	if jobsReturned <= 0 {
+		return nil, nil
+	}
+	pjs := make([]JobInfo, 0, jobsReturned)
+	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
+	for _, j := range ji {
+		pji := JobInfo{
+			JobID:        j.JobID,
+			StatusCode:   j.StatusCode,
+			Priority:     j.Priority,
+			Position:     j.Position,
+			TotalPages:   j.TotalPages,
+			PagesPrinted: j.PagesPrinted,
+		}
+		if j.MachineName != nil {
+			pji.UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
+		}
+		if j.UserName != nil {
+			pji.UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
+		}
+		if j.Document != nil {
+			pji.DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
+		}
+		if j.DataType != nil {
+			pji.DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
+		}
+		if j.Status != nil {
+			pji.Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
+		}
+		if strings.TrimSpace(pji.Status) == "" {
+			if pji.StatusCode == 0 {
+				pji.Status += "Queue Paused, "
+			}
+			if pji.StatusCode&JOB_STATUS_PRINTING != 0 {
+				pji.Status += "Printing, "
+			}
+			if pji.StatusCode&JOB_STATUS_PAUSED != 0 {
+				pji.Status += "Paused, "
+			}
+			if pji.StatusCode&JOB_STATUS_ERROR != 0 {
+				pji.Status += "Error, "
+			}
+			if pji.StatusCode&JOB_STATUS_DELETING != 0 {
+				pji.Status += "Deleting, "
+			}
+			if pji.StatusCode&JOB_STATUS_SPOOLING != 0 {
+				pji.Status += "Spooling, "
+			}
+			if pji.StatusCode&JOB_STATUS_OFFLINE != 0 {
+				pji.Status += "Printer Offline, "
+			}
+			if pji.StatusCode&JOB_STATUS_PAPEROUT != 0 {
+				pji.Status += "Out of Paper, "
+			}
+			if pji.StatusCode&JOB_STATUS_PRINTED != 0 {
+				pji.Status += "Printed, "
+			}
+			if pji.StatusCode&JOB_STATUS_DELETED != 0 {
+				pji.Status += "Deleted, "
+			}
+			if pji.StatusCode&JOB_STATUS_BLOCKED_DEVQ != 0 {
+				pji.Status += "Driver Error, "
+			}
+			if pji.StatusCode&JOB_STATUS_USER_INTERVENTION != 0 {
+				pji.Status += "User Action Required, "
+			}
+			if pji.StatusCode&JOB_STATUS_RESTART != 0 {
+				pji.Status += "Restarted, "
+			}
+			if pji.StatusCode&JOB_STATUS_COMPLETE != 0 {
+				pji.Status += "Sent to Printer, "
+			}
+			if pji.StatusCode&JOB_STATUS_RETAINED != 0 {
+				pji.Status += "Retained, "
+			}
+			if pji.StatusCode&JOB_STATUS_RENDERING_LOCALLY != 0 {
+				pji.Status += "Rendering on Client, "
+			}
+			pji.Status = strings.TrimRight(pji.Status, ", ")
+		}
+		pji.Submitted = time.Date(
+			int(j.Submitted.Year),
+			time.Month(int(j.Submitted.Month)),
+			int(j.Submitted.Day),
+			int(j.Submitted.Hour),
+			int(j.Submitted.Minute),
+			int(j.Submitted.Second),
+			int(1000*j.Submitted.Milliseconds),
+			time.Local,
+		).UTC()
+		pjs = append(pjs, pji)
+	}
+	return pjs, nil
 }
 
 // DriverInfo returns information about printer p driver.
