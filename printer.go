@@ -6,6 +6,8 @@
 package printer
 
 import (
+	"bytes"
+	"errors"
 	"strings"
 	"syscall"
 	"time"
@@ -72,14 +74,109 @@ type JOB_INFO_1 struct {
 	Submitted    syscall.Systemtime
 }
 
+type PRINTER_NOTIFY_OPTIONS_TYPE struct {
+	Type      uint16
+	Reserved0 uint16
+	Reserved1 uint32
+	Reserved2 uint32
+	Count     uint32
+	PFields   *uint16
+}
+
+type PRINTER_NOTIFY_OPTIONS struct {
+	Version uint32
+	Flags   uint32
+	Count   uint32
+	PTypes  *PRINTER_NOTIFY_OPTIONS_TYPE
+}
+
+type NOTIFY_DATA struct {
+	Datasz  uint32
+	Dataptr unsafe.Pointer
+}
+
+type PRINTER_NOTIFY_INFO_DATA struct {
+	Type       uint16
+	Field      uint16
+	Reserved   uint32
+	ID         uint32
+	NotifyData NOTIFY_DATA
+}
+
+type PRINTER_NOTIFY_INFO struct {
+	Version uint32
+	Flags   uint32
+	Count   uint32
+	PData   [0xff]PRINTER_NOTIFY_INFO_DATA
+}
+
 const (
 	PRINTER_ENUM_LOCAL       = 2
 	PRINTER_ENUM_CONNECTIONS = 4
 
 	PRINTER_DRIVER_XPS = 0x00000002
-)
 
-const (
+	PRINTER_CHANGE_ADD_PRINTER               = 0x00000001
+	PRINTER_CHANGE_SET_PRINTER               = 0x00000002
+	PRINTER_CHANGE_DELETE_PRINTER            = 0x00000004
+	PRINTER_CHANGE_FAILED_CONNECTION_PRINTER = 0x00000008
+	PRINTER_CHANGE_PRINTER                   = 0x000000FF
+	PRINTER_CHANGE_ADD_JOB                   = 0x00000100
+	PRINTER_CHANGE_SET_JOB                   = 0x00000200
+	PRINTER_CHANGE_DELETE_JOB                = 0x00000400
+	PRINTER_CHANGE_WRITE_JOB                 = 0x00000800
+	PRINTER_CHANGE_JOB                       = 0x0000FF00
+	PRINTER_CHANGE_ADD_FORM                  = 0x00010000
+	PRINTER_CHANGE_SET_FORM                  = 0x00020000
+	PRINTER_CHANGE_DELETE_FORM               = 0x00040000
+	PRINTER_CHANGE_FORM                      = 0x00070000
+	PRINTER_CHANGE_ADD_PORT                  = 0x00100000
+	PRINTER_CHANGE_CONFIGURE_PORT            = 0x00200000
+	PRINTER_CHANGE_DELETE_PORT               = 0x00400000
+	PRINTER_CHANGE_PORT                      = 0x00700000
+	PRINTER_CHANGE_ADD_PRINT_PROCESSOR       = 0x01000000
+	PRINTER_CHANGE_DELETE_PRINT_PROCESSOR    = 0x04000000
+	PRINTER_CHANGE_PRINT_PROCESSOR           = 0x07000000
+	PRINTER_CHANGE_SERVER                    = 0x08000000
+	PRINTER_CHANGE_ADD_PRINTER_DRIVER        = 0x10000000
+	PRINTER_CHANGE_SET_PRINTER_DRIVER        = 0x20000000
+	PRINTER_CHANGE_DELETE_PRINTER_DRIVER     = 0x40000000
+	PRINTER_CHANGE_PRINTER_DRIVER            = 0x70000000
+	PRINTER_CHANGE_TIMEOUT                   = 0x80000000
+	PRINTER_CHANGE_ALL                       = 0x7F77FFFF
+
+	JOB_NOTIFY_FIELD_PRINTER_NAME        = 0x00
+	JOB_NOTIFY_FIELD_MACHINE_NAME        = 0x01
+	JOB_NOTIFY_FIELD_PORT_NAME           = 0x02
+	JOB_NOTIFY_FIELD_USER_NAME           = 0x03
+	JOB_NOTIFY_FIELD_NOTIFY_NAME         = 0x04
+	JOB_NOTIFY_FIELD_DATATYPE            = 0x05
+	JOB_NOTIFY_FIELD_PRINT_PROCESSOR     = 0x06
+	JOB_NOTIFY_FIELD_PARAMETERS          = 0x07
+	JOB_NOTIFY_FIELD_DRIVER_NAME         = 0x08
+	JOB_NOTIFY_FIELD_DEVMODE             = 0x09
+	JOB_NOTIFY_FIELD_STATUS              = 0x0A
+	JOB_NOTIFY_FIELD_STATUS_STRING       = 0x0B
+	JOB_NOTIFY_FIELD_SECURITY_DESCRIPTOR = 0x0C
+	JOB_NOTIFY_FIELD_DOCUMENT            = 0x0D
+	JOB_NOTIFY_FIELD_PRIORITY            = 0x0E
+	JOB_NOTIFY_FIELD_POSITION            = 0x0F
+	JOB_NOTIFY_FIELD_SUBMITTED           = 0x10
+	JOB_NOTIFY_FIELD_START_TIME          = 0x11
+	JOB_NOTIFY_FIELD_UNTIL_TIME          = 0x12
+	JOB_NOTIFY_FIELD_TIME                = 0x13
+	JOB_NOTIFY_FIELD_TOTAL_PAGES         = 0x14
+	JOB_NOTIFY_FIELD_PAGES_PRINTED       = 0x15
+	JOB_NOTIFY_FIELD_TOTAL_BYTES         = 0x16
+	JOB_NOTIFY_FIELD_BYTES_PRINTED       = 0x17
+	JOB_NOTIFY_FIELD_REMOTE_JOB_ID       = 0x18
+
+	PRINTER_NOTIFY_TYPE = 0 // TODO: Implement support for this
+	JOB_NOTIFY_TYPE     = 1
+
+	PRINTER_NOTIFY_INFO_DISCARDED  = 1
+	PRINTER_NOTIFY_OPTIONS_REFRESH = 1
+
 	JOB_STATUS_PAUSED            = 0x00000001 // Job is paused
 	JOB_STATUS_ERROR             = 0x00000002 // An error is associated with the job
 	JOB_STATUS_DELETING          = 0x00000004 // Job is being deleted
@@ -97,6 +194,8 @@ const (
 	JOB_STATUS_RENDERING_LOCALLY = 0x00004000 // Job rendering locally on the client
 )
 
+var ErrNoNotification = errors.New("no notification information")
+
 //sys	GetDefaultPrinter(buf *uint16, bufN *uint32) (err error) = winspool.GetDefaultPrinterW
 //sys	ClosePrinter(h syscall.Handle) (err error) = winspool.ClosePrinter
 //sys	OpenPrinter(name *uint16, h *syscall.Handle, defaults uintptr) (err error) = winspool.OpenPrinterW
@@ -108,6 +207,10 @@ const (
 //sys	EnumPrinters(flags uint32, name *uint16, level uint32, buf *byte, bufN uint32, needed *uint32, returned *uint32) (err error) = winspool.EnumPrintersW
 //sys	GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n uint32, needed *uint32) (err error) = winspool.GetPrinterDriverW
 //sys	EnumJobs(h syscall.Handle, firstJob uint32, noJobs uint32, level uint32, buf *byte, bufN uint32, bytesNeeded *uint32, jobsReturned *uint32) (err error) = winspool.EnumJobsW
+//sys   FindFirstPrinterChangeNotification(h syscall.Handle, filter uint32, options uint32, notifyOptions *PRINTER_NOTIFY_OPTIONS) (rtn syscall.Handle, err error) = winspool.FindFirstPrinterChangeNotification
+//sys   FindNextPrinterChangeNotification(h syscall.Handle, cause *uint16, options *PRINTER_NOTIFY_OPTIONS, info **PRINTER_NOTIFY_INFO) (err error) = winspool.FindNextPrinterChangeNotification
+//sys   FindClosePrinterChangeNotification(h syscall.Handle) (err error) = winspool.FindClosePrinterChangeNotification
+//sys   FreePrinterNotifyInfo(info *PRINTER_NOTIFY_INFO) (err error) = winspool.FreePrinterNotifyInfo
 
 func Default() (string, error) {
 	b := make([]uint16, 3)
@@ -152,13 +255,19 @@ func ReadNames() ([]string, error) {
 }
 
 type Printer struct {
-	h syscall.Handle
+	h                    syscall.Handle
+	notificationsRunning bool
 }
 
 func Open(name string) (*Printer, error) {
 	var p Printer
 	// TODO: implement pDefault parameter
-	err := OpenPrinter(&(syscall.StringToUTF16(name))[0], &p.h, 0)
+	nameutf16, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
+
+	err = OpenPrinter(nameutf16, &p.h, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +296,86 @@ type JobInfo struct {
 	TotalPages      uint32
 	PagesPrinted    uint32
 	Submitted       time.Time
+}
+
+// systemTimeToTime converts a syscall.Systemtime to a time.Time
+// isUTC indicates if the syscall.Systemtime is in UTC or local time
+// see https://msdn.microsoft.com/en-us/library/windows/desktop/ms724950(v=vs.85).aspx
+// the time.Time is always UTC
+func systemTimeToTime(st *syscall.Systemtime, isUTC bool) time.Time {
+	var loc *time.Location
+	if isUTC {
+		loc = time.UTC
+	} else {
+		loc = time.Local
+	}
+
+	return time.Date(
+		int(st.Year),
+		time.Month(int(st.Month)),
+		int(st.Day),
+		int(st.Hour),
+		int(st.Minute),
+		int(st.Second),
+		int(1000*st.Milliseconds),
+		loc,
+	).UTC()
+}
+
+func jobStatusCodeToString(sc uint32) string {
+	var buf bytes.Buffer
+
+	if sc == 0 {
+		return "Queue Paused"
+	}
+
+	if sc&JOB_STATUS_PRINTING != 0 {
+		buf.WriteString("Printing, ")
+	}
+	if sc&JOB_STATUS_PAUSED != 0 {
+		buf.WriteString("Paused, ")
+	}
+	if sc&JOB_STATUS_ERROR != 0 {
+		buf.WriteString("Error, ")
+	}
+	if sc&JOB_STATUS_DELETING != 0 {
+		buf.WriteString("Deleting, ")
+	}
+	if sc&JOB_STATUS_SPOOLING != 0 {
+		buf.WriteString("Spooling, ")
+	}
+	if sc&JOB_STATUS_OFFLINE != 0 {
+		buf.WriteString("Printer Offline, ")
+	}
+	if sc&JOB_STATUS_PAPEROUT != 0 {
+		buf.WriteString("Out of Paper, ")
+	}
+	if sc&JOB_STATUS_PRINTED != 0 {
+		buf.WriteString("Printed, ")
+	}
+	if sc&JOB_STATUS_DELETED != 0 {
+		buf.WriteString("Deleted, ")
+	}
+	if sc&JOB_STATUS_BLOCKED_DEVQ != 0 {
+		buf.WriteString("Driver Error, ")
+	}
+	if sc&JOB_STATUS_USER_INTERVENTION != 0 {
+		buf.WriteString("User Action Required, ")
+	}
+	if sc&JOB_STATUS_RESTART != 0 {
+		buf.WriteString("Restarted, ")
+	}
+	if sc&JOB_STATUS_COMPLETE != 0 {
+		buf.WriteString("Sent to Printer, ")
+	}
+	if sc&JOB_STATUS_RETAINED != 0 {
+		buf.WriteString("Retained, ")
+	}
+	if sc&JOB_STATUS_RENDERING_LOCALLY != 0 {
+		buf.WriteString("Rendering on Client, ")
+	}
+
+	return strings.TrimRight(buf.String(), ", ")
 }
 
 // Jobs returns information about all print jobs on this printer
@@ -236,66 +425,9 @@ func (p *Printer) Jobs() ([]JobInfo, error) {
 			pji.Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
 		}
 		if strings.TrimSpace(pji.Status) == "" {
-			if pji.StatusCode == 0 {
-				pji.Status += "Queue Paused, "
-			}
-			if pji.StatusCode&JOB_STATUS_PRINTING != 0 {
-				pji.Status += "Printing, "
-			}
-			if pji.StatusCode&JOB_STATUS_PAUSED != 0 {
-				pji.Status += "Paused, "
-			}
-			if pji.StatusCode&JOB_STATUS_ERROR != 0 {
-				pji.Status += "Error, "
-			}
-			if pji.StatusCode&JOB_STATUS_DELETING != 0 {
-				pji.Status += "Deleting, "
-			}
-			if pji.StatusCode&JOB_STATUS_SPOOLING != 0 {
-				pji.Status += "Spooling, "
-			}
-			if pji.StatusCode&JOB_STATUS_OFFLINE != 0 {
-				pji.Status += "Printer Offline, "
-			}
-			if pji.StatusCode&JOB_STATUS_PAPEROUT != 0 {
-				pji.Status += "Out of Paper, "
-			}
-			if pji.StatusCode&JOB_STATUS_PRINTED != 0 {
-				pji.Status += "Printed, "
-			}
-			if pji.StatusCode&JOB_STATUS_DELETED != 0 {
-				pji.Status += "Deleted, "
-			}
-			if pji.StatusCode&JOB_STATUS_BLOCKED_DEVQ != 0 {
-				pji.Status += "Driver Error, "
-			}
-			if pji.StatusCode&JOB_STATUS_USER_INTERVENTION != 0 {
-				pji.Status += "User Action Required, "
-			}
-			if pji.StatusCode&JOB_STATUS_RESTART != 0 {
-				pji.Status += "Restarted, "
-			}
-			if pji.StatusCode&JOB_STATUS_COMPLETE != 0 {
-				pji.Status += "Sent to Printer, "
-			}
-			if pji.StatusCode&JOB_STATUS_RETAINED != 0 {
-				pji.Status += "Retained, "
-			}
-			if pji.StatusCode&JOB_STATUS_RENDERING_LOCALLY != 0 {
-				pji.Status += "Rendering on Client, "
-			}
-			pji.Status = strings.TrimRight(pji.Status, ", ")
+			pji.Status = jobStatusCodeToString(pji.StatusCode)
 		}
-		pji.Submitted = time.Date(
-			int(j.Submitted.Year),
-			time.Month(int(j.Submitted.Month)),
-			int(j.Submitted.Day),
-			int(j.Submitted.Hour),
-			int(j.Submitted.Minute),
-			int(j.Submitted.Second),
-			int(1000*j.Submitted.Milliseconds),
-			time.Local,
-		).UTC()
+		pji.Submitted = systemTimeToTime(&j.Submitted, true)
 		pjs = append(pjs, pji)
 	}
 	return pjs, nil
@@ -375,4 +507,164 @@ func (p *Printer) EndPage() error {
 
 func (p *Printer) Close() error {
 	return ClosePrinter(p.h)
+}
+
+// NotifyInfoData is a golang friendly PRINTER_NOTIFY_INFO_DATA
+// notably the union is now expressed as an interface{} type
+// See https://docs.microsoft.com/en-us/windows/desktop/printdocs/printer-notify-info-data
+type NotifyInfoData struct {
+	Type  uint16 // one of PRINTER_NOTIFY_TYPE or JOB_NOTIFY_TYPE
+	Field uint16 // JOB_NOTIFY_FIELD_* or PRINTER_NOTIFY_FIELD_* depending on the above
+	ID    uint32 // if JOB_NOTIFY_TYPE, this is the print job ID
+
+	Value interface{}
+}
+
+// NotifyInfo is a golang friendly PRINTER_NOTIFY_INFO struct
+// see https://docs.microsoft.com/en-us/windows/desktop/printdocs/printer-notify-info
+type NotifyInfo struct {
+	Version int
+	Flags   uint
+	Cause   uint
+	Data    []*NotifyInfoData
+}
+
+// ToNotifyInfoData converts the C-like PRINTER_NOTIFY_INFO_DATA struct to a
+// more Golang friendly NotifyInfoData
+func (pnid *PRINTER_NOTIFY_INFO_DATA) ToNotifyInfoData() *NotifyInfoData {
+	p := &NotifyInfoData{
+		Type:  pnid.Type,
+		Field: pnid.Field,
+		ID:    pnid.ID,
+	}
+
+	if pnid.Type == JOB_NOTIFY_TYPE {
+		switch pnid.Field {
+		case JOB_NOTIFY_FIELD_PRINTER_NAME,
+			JOB_NOTIFY_FIELD_MACHINE_NAME,
+			JOB_NOTIFY_FIELD_PORT_NAME,
+			JOB_NOTIFY_FIELD_USER_NAME,
+			JOB_NOTIFY_FIELD_NOTIFY_NAME,
+			JOB_NOTIFY_FIELD_DATATYPE,
+			JOB_NOTIFY_FIELD_PRINT_PROCESSOR,
+			JOB_NOTIFY_FIELD_PARAMETERS,
+			JOB_NOTIFY_FIELD_DRIVER_NAME,
+			JOB_NOTIFY_FIELD_STATUS_STRING,
+			JOB_NOTIFY_FIELD_DOCUMENT:
+			ps := ((*[0xffff]uint16)(pnid.NotifyData.Dataptr))[:pnid.NotifyData.Datasz/2]
+			p.Value = syscall.UTF16ToString(ps)
+		case JOB_NOTIFY_FIELD_STATUS,
+			JOB_NOTIFY_FIELD_PRIORITY,
+			JOB_NOTIFY_FIELD_POSITION,
+			JOB_NOTIFY_FIELD_START_TIME,
+			JOB_NOTIFY_FIELD_UNTIL_TIME,
+			JOB_NOTIFY_FIELD_TIME,
+			JOB_NOTIFY_FIELD_TOTAL_PAGES,
+			JOB_NOTIFY_FIELD_PAGES_PRINTED,
+			JOB_NOTIFY_FIELD_TOTAL_BYTES,
+			JOB_NOTIFY_FIELD_BYTES_PRINTED:
+			p.Value = uint32(pnid.NotifyData.Datasz)
+		case JOB_NOTIFY_FIELD_DEVMODE:
+			// TODO pnid.NotifyData.Dataptr is a pointer to a DEVMODE structure that contains device-initialization and environment data for the printer driver.
+		case JOB_NOTIFY_FIELD_SECURITY_DESCRIPTOR:
+			// TODO Not supported according to https://docs.microsoft.com/en-us/windows/desktop/printdocs/printer-notify-info-data , though does seem to be something there
+		case JOB_NOTIFY_FIELD_SUBMITTED:
+			p.Value = systemTimeToTime((*syscall.Systemtime)(pnid.NotifyData.Dataptr), true)
+		default:
+		}
+	}
+
+	return p
+}
+
+// ToNotifyInfo converts the C-like PRINTER_NOTIFY_INFO struct to a
+// more Golang friendly NotifyInfo
+func (pni *PRINTER_NOTIFY_INFO) ToNotifyInfo() *NotifyInfo {
+	p := &NotifyInfo{
+		Version: int(pni.Version),
+		Flags:   uint(pni.Flags),
+		Data:    make([]*NotifyInfoData, pni.Count),
+	}
+
+	for i := 0; i < int(pni.Count); i++ {
+		p.Data[i] = pni.PData[i].ToNotifyInfoData()
+	}
+
+	return p
+}
+
+// ChangeNotificationHandle wraps the change notification object created by Printer::ChangeNotifications
+type ChangeNotificationHandle struct {
+	h syscall.Handle
+}
+
+// ChangeNotifications gets a handle that can be used to query for spooler notifications.
+// It effectively wraps FindFirstPrinterChangeNotification
+// see https://docs.microsoft.com/en-us/windows/desktop/printdocs/findfirstprinterchangenotification
+func (p *Printer) ChangeNotifications(filter uint32, options uint32, printerNotifyOptions *PRINTER_NOTIFY_OPTIONS) (*ChangeNotificationHandle, error) {
+	h, err := FindFirstPrinterChangeNotification(p.h, filter, options, printerNotifyOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ChangeNotificationHandle{
+		h: h,
+	}, nil
+}
+
+// Next retrieves information about the most recent change notification for a change notification object associated with a printer or print server
+// It effectively wraps FindNextPrinterChangeNotification
+// see https://docs.microsoft.com/en-us/windows/desktop/printdocs/findnextprinterchangenotification
+func (c *ChangeNotificationHandle) Next(printerNotifyOptions *PRINTER_NOTIFY_OPTIONS) (*NotifyInfo, error) {
+	var cause uint16
+	var notifyInfo *PRINTER_NOTIFY_INFO
+
+	err := FindNextPrinterChangeNotification(c.h, &cause, nil, &notifyInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if notifyInfo != nil && (notifyInfo.Flags&PRINTER_NOTIFY_INFO_DISCARDED) == PRINTER_NOTIFY_INFO_DISCARDED {
+		/* If the PRINTER_NOTIFY_INFO_DISCARDED bit is set in the Flags member of the PRINTER_NOTIFY_INFO structure,
+		an overflow or error occurred, and notifications may have been lost.
+		In this case, no additional notifications will be sent until you make a second
+		FindNextPrinterChangeNotification call that specifies PRINTER_NOTIFY_OPTIONS_REFRESH.
+		*/
+		_ = FreePrinterNotifyInfo(notifyInfo)
+		notifyInfo = nil
+
+		pno := &PRINTER_NOTIFY_OPTIONS{
+			Version: 2,
+			Flags:   PRINTER_NOTIFY_OPTIONS_REFRESH,
+			Count:   0,
+			PTypes:  nil,
+		}
+
+		err := FindNextPrinterChangeNotification(c.h, &cause, pno, &notifyInfo)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if notifyInfo != nil {
+		pni := notifyInfo.ToNotifyInfo()
+		pni.Cause = uint(cause)
+
+		_ = FreePrinterNotifyInfo(notifyInfo)
+
+		return pni, nil
+	} else {
+		return nil, ErrNoNotification
+	}
+}
+
+// Wait calls WaitForSingleObject on the change notification handle
+func (c *ChangeNotificationHandle) Wait(milliseconds uint32) (uint32, error) {
+	return syscall.WaitForSingleObject(c.h, milliseconds)
+}
+
+// Close closes the change notification handle, wrapping FindClosePrinterChangeNotification
+// see https://docs.microsoft.com/en-us/windows/desktop/printdocs/findcloseprinterchangenotification
+func (c *ChangeNotificationHandle) Close() error {
+	return FindClosePrinterChangeNotification(c.h)
 }
