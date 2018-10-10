@@ -3,6 +3,7 @@ package printer
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"syscall"
 )
 
@@ -104,7 +105,7 @@ func (pnid *NotifyInfoData) String() string {
 		return fmt.Sprintf("Printer Field %d Value %v", pnid.Field, pnid.Value)
 	}
 
-	return fmt.Sprintf("%#v\n", pnid)
+	return fmt.Sprintf("%#v", pnid)
 }
 
 func (pni *NotifyInfo) String() string {
@@ -115,7 +116,7 @@ func (pni *NotifyInfo) String() string {
 		fmt.Fprintf(&buf, "%s\n", item.String())
 	}
 
-	return buf.String()
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 // GetNotifications wraps the whole FindFirstPrinterChangeNotification, WaitForSingleObject,

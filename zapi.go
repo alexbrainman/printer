@@ -21,6 +21,8 @@ var (
 	procEnumPrintersW                      = modwinspool.NewProc("EnumPrintersW")
 	procGetPrinterDriverW                  = modwinspool.NewProc("GetPrinterDriverW")
 	procEnumJobsW                          = modwinspool.NewProc("EnumJobsW")
+	procGetJobW                            = modwinspool.NewProc("GetJobW")
+	procSetJobW                            = modwinspool.NewProc("SetJobW")
 	procFindFirstPrinterChangeNotification = modwinspool.NewProc("FindFirstPrinterChangeNotification")
 	procFindNextPrinterChangeNotification  = modwinspool.NewProc("FindNextPrinterChangeNotification")
 	procFindClosePrinterChangeNotification = modwinspool.NewProc("FindClosePrinterChangeNotification")
@@ -149,6 +151,30 @@ func GetPrinterDriver(h syscall.Handle, env *uint16, level uint32, di *byte, n u
 
 func EnumJobs(h syscall.Handle, firstJob uint32, noJobs uint32, level uint32, buf *byte, bufN uint32, bytesNeeded *uint32, jobsReturned *uint32) (err error) {
 	r1, _, e1 := syscall.Syscall9(procEnumJobsW.Addr(), 8, uintptr(h), uintptr(firstJob), uintptr(noJobs), uintptr(level), uintptr(unsafe.Pointer(buf)), uintptr(bufN), uintptr(unsafe.Pointer(bytesNeeded)), uintptr(unsafe.Pointer(jobsReturned)), 0)
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func GetJob(h syscall.Handle, jobId uint32, level uint32, buf *byte, bufN uint32, bytesNeeded *uint32) (err error) {
+	r1, _, e1 := syscall.Syscall6(procGetJobW.Addr(), 6, uintptr(h), uintptr(jobId), uintptr(level), uintptr(unsafe.Pointer(buf)), uintptr(bufN), uintptr(unsafe.Pointer(bytesNeeded)))
+	if r1 == 0 {
+		if e1 != 0 {
+			err = error(e1)
+		} else {
+			err = syscall.EINVAL
+		}
+	}
+	return
+}
+
+func SetJob(h syscall.Handle, jobId uint32, level uint32, buf *byte, command uint32) (err error) {
+	r1, _, e1 := syscall.Syscall6(procSetJobW.Addr(), 5, uintptr(h), uintptr(jobId), uintptr(level), uintptr(unsafe.Pointer(buf)), uintptr(command), 0)
 	if r1 == 0 {
 		if e1 != 0 {
 			err = error(e1)

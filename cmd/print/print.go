@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alexbrainman/printer"
+	"github.com/jazzy-crane/printer"
 )
 
 var (
@@ -77,7 +77,7 @@ func printOneDocument(printerName, documentName string, lines []string) error {
 	}
 	defer p.Close()
 
-	err = p.StartRawDocument(documentName)
+	err = p.StartRawDocument(documentName, "")
 	if err != nil {
 		return err
 	}
