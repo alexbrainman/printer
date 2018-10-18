@@ -137,9 +137,10 @@ func (p *Printer) GetNotifications(done <-chan struct{}, filter uint32, options 
 		}()
 		for {
 			// Ideally this should be syscall.INFINITE, but need to keep waking up to check the done channel
+			// and check the spooler RPC service is still around
 			rtn, err := notificationHandle.Wait(500)
 			if err != nil {
-				continue
+				return
 			}
 
 			if rtn == syscall.WAIT_TIMEOUT {
@@ -147,6 +148,12 @@ func (p *Printer) GetNotifications(done <-chan struct{}, filter uint32, options 
 				case <-done:
 					return
 				default:
+					// Call a quick and inexpensive function using the printer handle so we can determine if the spooler RPC
+					// service is still there
+					_, err := p.DriverInfo()
+					if err != nil {
+						return
+					}
 					continue
 				}
 			}
@@ -154,7 +161,11 @@ func (p *Printer) GetNotifications(done <-chan struct{}, filter uint32, options 
 			if rtn != syscall.WAIT_FAILED {
 				pni, err := notificationHandle.Next(nil)
 				if err != nil {
-					continue
+					if err == ErrNoNotification {
+						continue
+					}
+
+					return
 				}
 
 				select {

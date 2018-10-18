@@ -4,7 +4,7 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"sync"
 	"time"
 
 	"github.com/jazzy-crane/printer"
@@ -25,14 +25,14 @@ var jobNotify = []uint16{
 }
 
 func main() {
-	pnames, err := printer.ReadNames()
-	if err != nil {
-		fmt.Println("printer.ReadNames", err)
-		os.Exit(1)
-	}
-
 	multiplexed := make(chan *printer.NotifyInfo)
 	done := make(chan struct{})
+
+	go func() {
+		for notification := range multiplexed {
+			fmt.Printf("\n%s\n", notification)
+		}
+	}()
 
 	notifyOptions := &printer.PRINTER_NOTIFY_OPTIONS{
 		Version: 2,
@@ -45,39 +45,44 @@ func main() {
 		},
 	}
 
-	for _, pname := range pnames {
-		fmt.Println("Opening printer", pname)
-		p, err := printer.Open(pname)
-		if err != nil {
-			fmt.Println("printer.Open", pname, err)
-			os.Exit(1)
-		}
-
-		n, err := p.GetNotifications(done, printer.PRINTER_CHANGE_ALL, 0, notifyOptions)
-		if err != nil {
-			fmt.Println("printer.GetNotifications", pname, err)
-			os.Exit(1)
-		}
-
-		go func(notifications <-chan *printer.NotifyInfo) {
-			for n := range notifications {
-				multiplexed <- n
-			}
-			fmt.Println("Assume cleanup complete")
-		}(n)
-	}
-
-	timeout := time.After(time.Minute)
-
-loop:
+outerloop:
 	for {
-		select {
-		case <-timeout:
-			close(done)
-			time.Sleep(time.Second)
-			break loop
-		case notification := <-multiplexed:
-			fmt.Printf("\n%s\n", notification)
+		wg := sync.WaitGroup{}
+		pnames, err := printer.ReadNames()
+		if err != nil {
+			fmt.Println("printer.ReadNames", err)
+			time.Sleep(10 * time.Second)
+			continue
 		}
+
+		for _, pname := range pnames {
+			p, err := printer.Open(pname)
+			if err != nil {
+				fmt.Println("printer.Open", pname, err)
+				time.Sleep(10 * time.Second)
+				goto outerloop
+			}
+
+			n, err := p.GetNotifications(done, printer.PRINTER_CHANGE_ALL, 0, notifyOptions)
+			if err != nil {
+				fmt.Println("printer.GetNotifications", pname, err)
+				time.Sleep(10 * time.Second)
+				goto outerloop
+			}
+
+			wg.Add(1)
+
+			go func(notifications <-chan *printer.NotifyInfo) {
+				defer wg.Done()
+				fmt.Println("Starting notification goroutine")
+				for n := range notifications {
+					multiplexed <- n
+				}
+				fmt.Println("Notification goroutine returned")
+			}(n)
+		}
+
+		wg.Wait()
+		fmt.Println("All notification goroutines returned, probably due to spooler service stop/restart")
 	}
 }
