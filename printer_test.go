@@ -22,7 +22,7 @@ func TestPrinter(t *testing.T) {
 	}
 	defer p.Close()
 
-	err = p.StartDocument("my document", "RAW")
+	err = p.StartDocument("my document", "my_document", "RAW")
 	if err != nil {
 		t.Fatalf("StartDocument failed: %v", err)
 	}

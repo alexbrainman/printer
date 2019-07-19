@@ -124,7 +124,7 @@ type PRINTER_NOTIFY_INFO struct {
 	Version uint32
 	Flags   uint32
 	Count   uint32
-	PData   [0xff]PRINTER_NOTIFY_INFO_DATA
+	PData   [PRINTER_NOTIFY_MAX_NOTIFICATIONS]PRINTER_NOTIFY_INFO_DATA
 }
 
 const (
@@ -193,6 +193,7 @@ const (
 
 	PRINTER_NOTIFY_INFO_DISCARDED  = 1
 	PRINTER_NOTIFY_OPTIONS_REFRESH = 1
+	PRINTER_NOTIFY_MAX_NOTIFICATIONS = 0xfff
 
 	JOB_STATUS_PAUSED            = 0x00000001 // Job is paused
 	JOB_STATUS_ERROR             = 0x00000002 // An error is associated with the job
@@ -671,13 +672,18 @@ func (pnid *PRINTER_NOTIFY_INFO_DATA) ToNotifyInfoData() *NotifyInfoData {
 // ToNotifyInfo converts the C-like PRINTER_NOTIFY_INFO struct to a
 // more Golang friendly NotifyInfo
 func (pni *PRINTER_NOTIFY_INFO) ToNotifyInfo() *NotifyInfo {
+	numNotifications := int(pni.Count)
+	if numNotifications > PRINTER_NOTIFY_MAX_NOTIFICATIONS {
+		numNotifications = PRINTER_NOTIFY_MAX_NOTIFICATIONS
+	}
+
 	p := &NotifyInfo{
 		Version: int(pni.Version),
 		Flags:   uint(pni.Flags),
-		Data:    make([]*NotifyInfoData, pni.Count),
+		Data:    make([]*NotifyInfoData, numNotifications),
 	}
 
-	for i := 0; i < int(pni.Count); i++ {
+	for i := 0; i < numNotifications; i++ {
 		p.Data[i] = pni.PData[i].ToNotifyInfoData()
 	}
 
