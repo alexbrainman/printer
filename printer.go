@@ -126,6 +126,26 @@ func Default() (string, error) {
 	return syscall.UTF16ToString(b), nil
 }
 
+const maxStringSize = 1 << 20
+
+func utf16PtrToString(p *uint16) string {
+	if p == nil {
+		return ""
+	}
+	// Find NUL terminator.
+	end := unsafe.Pointer(p)
+	n := 0
+	for *(*uint16)(end) != 0 {
+		end = unsafe.Pointer(uintptr(end) + unsafe.Sizeof(*p))
+		n++
+	}
+	if n >= maxStringSize {
+		return ""
+	}
+	v := (*[maxStringSize]uint16)(unsafe.Pointer(p))[:n:n]
+	return syscall.UTF16ToString(v)
+}
+
 // ReadNames return printer names on the system
 func ReadNames() ([]string, error) {
 	const flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS
@@ -142,11 +162,10 @@ func ReadNames() ([]string, error) {
 			return nil, err
 		}
 	}
-	ps := (*[1024]PRINTER_INFO_5)(unsafe.Pointer(&buf[0]))[:returned]
+	ps := (*[1024]PRINTER_INFO_5)(unsafe.Pointer(&buf[0]))[:returned:returned]
 	names := make([]string, 0, returned)
 	for _, p := range ps {
-		v := (*[1024]uint16)(unsafe.Pointer(p.PrinterName))[:]
-		names = append(names, syscall.UTF16ToString(v))
+		names = append(names, utf16PtrToString(p.PrinterName))
 	}
 	return names, nil
 }
@@ -213,28 +232,19 @@ func (p *Printer) Jobs() ([]JobInfo, error) {
 	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
 	for _, j := range ji {
 		pji := JobInfo{
-			JobID:        j.JobID,
-			StatusCode:   j.StatusCode,
-			Priority:     j.Priority,
-			Position:     j.Position,
-			TotalPages:   j.TotalPages,
-			PagesPrinted: j.PagesPrinted,
+			JobID:           j.JobID,
+			StatusCode:      j.StatusCode,
+			Priority:        j.Priority,
+			Position:        j.Position,
+			TotalPages:      j.TotalPages,
+			PagesPrinted:    j.PagesPrinted,
+			UserMachineName: utf16PtrToString(j.MachineName),
+			UserName:        utf16PtrToString(j.UserName),
+			DocumentName:    utf16PtrToString(j.Document),
+			DataType:        utf16PtrToString(j.DataType),
+			Status:          utf16PtrToString(j.Status),
 		}
-		if j.MachineName != nil {
-			pji.UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
-		}
-		if j.UserName != nil {
-			pji.UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
-		}
-		if j.Document != nil {
-			pji.DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
-		}
-		if j.DataType != nil {
-			pji.DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
-		}
-		if j.Status != nil {
-			pji.Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
-		}
+
 		if strings.TrimSpace(pji.Status) == "" {
 			if pji.StatusCode == 0 {
 				pji.Status += "Queue Paused, "
@@ -321,9 +331,9 @@ func (p *Printer) DriverInfo() (*DriverInfo, error) {
 	di := (*DRIVER_INFO_8)(unsafe.Pointer(&b[0]))
 	return &DriverInfo{
 		Attributes:  di.PrinterDriverAttributes,
-		Name:        syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Name))[:]),
-		DriverPath:  syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.DriverPath))[:]),
-		Environment: syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Environment))[:]),
+		Name:        utf16PtrToString(di.Name),
+		DriverPath:  utf16PtrToString(di.DriverPath),
+		Environment: utf16PtrToString(di.Environment),
 	}, nil
 }
 
