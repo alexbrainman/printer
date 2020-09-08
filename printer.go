@@ -229,7 +229,7 @@ func (p *Printer) Jobs() ([]JobInfo, error) {
 		return nil, nil
 	}
 	pjs := make([]JobInfo, 0, jobsReturned)
-	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
+	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned:jobsReturned]
 	for _, j := range ji {
 		pji := JobInfo{
 			JobID:           j.JobID,
