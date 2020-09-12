@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 //go:generate go run mksyscall_windows.go -output zapi.go printer.go
@@ -142,11 +144,10 @@ func ReadNames() ([]string, error) {
 			return nil, err
 		}
 	}
-	ps := (*[1024]PRINTER_INFO_5)(unsafe.Pointer(&buf[0]))[:returned]
+	ps := (*[1024]PRINTER_INFO_5)(unsafe.Pointer(&buf[0]))[:returned:returned]
 	names := make([]string, 0, returned)
 	for _, p := range ps {
-		v := (*[1024]uint16)(unsafe.Pointer(p.PrinterName))[:]
-		names = append(names, syscall.UTF16ToString(v))
+		names = append(names, windows.UTF16PtrToString(p.PrinterName))
 	}
 	return names, nil
 }
@@ -210,7 +211,7 @@ func (p *Printer) Jobs() ([]JobInfo, error) {
 		return nil, nil
 	}
 	pjs := make([]JobInfo, 0, jobsReturned)
-	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned]
+	ji := (*[2048]JOB_INFO_1)(unsafe.Pointer(&buf[0]))[:jobsReturned:jobsReturned]
 	for _, j := range ji {
 		pji := JobInfo{
 			JobID:        j.JobID,
@@ -221,19 +222,19 @@ func (p *Printer) Jobs() ([]JobInfo, error) {
 			PagesPrinted: j.PagesPrinted,
 		}
 		if j.MachineName != nil {
-			pji.UserMachineName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.MachineName))[:])
+			pji.UserMachineName = windows.UTF16PtrToString(j.MachineName)
 		}
 		if j.UserName != nil {
-			pji.UserName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.UserName))[:])
+			pji.UserName = windows.UTF16PtrToString(j.UserName)
 		}
 		if j.Document != nil {
-			pji.DocumentName = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Document))[:])
+			pji.DocumentName = windows.UTF16PtrToString(j.Document)
 		}
 		if j.DataType != nil {
-			pji.DataType = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.DataType))[:])
+			pji.DataType = windows.UTF16PtrToString(j.DataType)
 		}
 		if j.Status != nil {
-			pji.Status = syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(j.Status))[:])
+			pji.Status = windows.UTF16PtrToString(j.Status)
 		}
 		if strings.TrimSpace(pji.Status) == "" {
 			if pji.StatusCode == 0 {
@@ -321,9 +322,9 @@ func (p *Printer) DriverInfo() (*DriverInfo, error) {
 	di := (*DRIVER_INFO_8)(unsafe.Pointer(&b[0]))
 	return &DriverInfo{
 		Attributes:  di.PrinterDriverAttributes,
-		Name:        syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Name))[:]),
-		DriverPath:  syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.DriverPath))[:]),
-		Environment: syscall.UTF16ToString((*[2048]uint16)(unsafe.Pointer(di.Environment))[:]),
+		Name:        windows.UTF16PtrToString(di.Name),
+		DriverPath:  windows.UTF16PtrToString(di.DriverPath),
+		Environment: windows.UTF16PtrToString(di.Environment),
 	}, nil
 }
 
